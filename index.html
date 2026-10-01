@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>♻️</text></svg>">
 <title>Coleta de Resíduos | Recebimento MTR</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -145,7 +146,7 @@ dialog h2{margin:0 0 10px;font-family:var(--disp);font-size:26px}
     <p class="manchete-sub">Informe a coleta do dia com o nº do MTR e a foto dos containers.</p>
     <div class="caixa">
       <div class="grupo"><label class="campo" for="capaLoja">Loja</label><select id="capaLoja" class="input"></select></div>
-      <div class="grupo"><label class="campo" for="capaPin">Senha da loja</label><input id="capaPin" class="input" type="password" inputmode="numeric" maxlength="6" autocomplete="off"></div>
+      <div class="grupo"><label class="campo" for="capaPin">Senha da loja</label><input id="capaPin" class="input" type="password" maxlength="40" autocomplete="off"></div>
       <button class="btn cheio" id="btnEntrarLoja">Entrar</button>
       <div id="msgCapa"></div>
     </div>
@@ -236,8 +237,7 @@ dialog h2{margin:0 0 10px;font-family:var(--disp);font-size:26px}
     </div>
   </div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
-    <button class="btn sec pq" id="btnGerarPins">Gerar senhas que faltam</button>
-    <button class="btn sec pq" id="btnExportPins">Exportar senhas e links</button>
+    <button class="btn sec pq" id="btnExportPins">Exportar links das lojas</button>
   </div>
   <div class="rolagem" style="margin-bottom:14px"><table><thead><tr>
     <th>Loja</th><th>Regional</th><th class="num">Containers</th><th>Senha</th><th>Ativa</th><th>Link da loja</th><th></th>
@@ -305,6 +305,11 @@ const horaBR = ts => new Date(ts).toLocaleTimeString("pt-BR", { hour: "2-digit",
 const num = n => Number(n).toLocaleString("pt-BR");
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const slug = s => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+async function hashSenha(txt) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("recebimentomtr:" + String(txt)));
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
+}
+const ehHash = v => typeof v === "string" && /^[0-9a-f]{64}$/.test(v);
 const STATUS_TXT = { ok: "Completa", parcial: "Parcial", extra: "Extra", sem: "Sem envio" };
 function statusDe(col, fixo) { if (!col) return "sem"; if (col < fixo) return "parcial"; if (col > fixo) return "extra"; return "ok"; }
 function corFaixa(v, f, alertaPraCima) {
@@ -388,16 +393,17 @@ $("#btnEntrarLoja").onclick = async () => {
   if (!u) return mostrarMsg("#msgCapa", "erro", "Sem conexão. Tente de novo em instantes.");
   const btn = $("#btnEntrarLoja"); btn.disabled = true;
   try {
-    await db.ref("sessoes/" + u.uid).set({ loja, pin, ts: Date.now() });
+    await db.ref("sessoes/" + u.uid).set({ loja, pin: await hashSenha(pin), ts: Date.now() });
     sessaoLoja = loja; qtd = 0;
     try { localStorage.setItem("mtr_loja", loja); } catch {}
     aplicarLojas(); mostrarInicio();
-  } catch (e) { mostrarMsg("#msgCapa", "erro", "Senha incorreta para esta loja."); }
+  } catch (e) { mostrarMsg("#msgCapa", "erro", "Senha incorreta ou loja ainda sem senha cadastrada. Fale com a Sustentabilidade."); }
   finally { btn.disabled = false; }
 };
 function ouvirPins() {
   if (ouvindoPins) return; ouvindoPins = true;
-  db.ref("pins").on("value", s => { pins = s.val() || {}; renderCadastro(); });
+  db.ref("pins").on("value", s => { pins = s.val() || {}; renderCadastro(); },
+    e => alert("Sem permissão para ler as senhas. As regras com o bloco pins não estão publicadas ou o login de gestor não é o e-mail das regras."));
 }
 
 /* ========= LOJAS ========= */
@@ -679,7 +685,7 @@ function renderCadastro() {
     <td>${esc(l.nome)}</td>
     <td><input class="input" style="padding:6px;min-width:120px" data-reg="${id}" value="${esc(l.regional || "")}"></td>
     <td class="num"><input class="input" style="padding:6px;width:72px;text-align:right" type="number" min="1" data-qtd="${id}" value="${Number(l.containers)}"></td>
-    <td><input class="input" style="padding:6px;width:90px" inputmode="numeric" maxlength="6" data-pin="${id}" value="${esc(pins[id] || "")}" placeholder="Sem senha"></td>
+    <td style="white-space:nowrap"><span class="tag ${ehHash(pins[id]) ? "ok" : "sem"}" style="margin:0 6px 0 0">${ehHash(pins[id]) ? "Definida" : "Sem senha"}</span><input class="input" style="padding:6px;width:120px" type="password" maxlength="40" autocomplete="new-password" data-pin="${id}" placeholder="Nova senha"> <button class="btn sec pq" data-defpin="${id}">Definir</button></td>
     <td><input type="checkbox" data-atv="${id}" ${l.ativo !== false ? "checked" : ""} aria-label="Loja ativa"></td>
     <td><button class="btn sec pq" data-link="${base}?loja=${id}">Copiar link</button></td>
     <td><button class="btn pq" data-salvar="${id}">Salvar</button></td></tr>`).join("") : `<tr><td colspan="7">Nenhuma loja cadastrada.</td></tr>`;
@@ -687,32 +693,28 @@ function renderCadastro() {
     try { await navigator.clipboard.writeText(b.dataset.link); b.textContent = "Copiado"; } catch { prompt("Copie o link:", b.dataset.link); }
     setTimeout(() => b.textContent = "Copiar link", 1800);
   });
+  $("#cCorpo").querySelectorAll("[data-defpin]").forEach(b => b.onclick = async () => {
+    const id = b.dataset.defpin, inp = document.querySelector(`[data-pin="${id}"]`), nova = inp.value.trim();
+    if (nova.length < 4) return alert("A senha precisa ter pelo menos 4 caracteres.");
+    if (!await confirmar("Definir senha?", `A senha da ${lojas[id].nome} será trocada. Celulares que já entraram com a senha antiga vão precisar entrar de novo.`, "Definir senha")) return;
+    try { await db.ref("pins/" + id).set(await hashSenha(nova)); inp.value = ""; alert(`Senha da ${lojas[id].nome} definida.`); }
+    catch (e) { alert("O Firebase recusou gravar a senha (" + e.message + "). Confira as regras publicadas."); }
+  });
   $("#cCorpo").querySelectorAll("[data-salvar]").forEach(b => b.onclick = () => {
     const id = b.dataset.salvar, q = parseInt(document.querySelector(`[data-qtd="${id}"]`).value, 10);
     if (!(q >= 1)) return alert("Containers fixos precisa ser 1 ou mais.");
-    const pin = document.querySelector(`[data-pin="${id}"]`).value.trim();
-    if (pin && !/^\d{4,6}$/.test(pin)) return alert("A senha precisa ter de 4 a 6 números.");
-    db.ref("pins/" + id).set(pin || null);
     b.textContent = "Salvo"; setTimeout(() => b.textContent = "Salvar", 1500);
     db.ref("lojas/" + id).update({ containers: q, regional: document.querySelector(`[data-reg="${id}"]`).value.trim(), ativo: document.querySelector(`[data-atv="${id}"]`).checked });
   });
 }
-$("#btnGerarPins").onclick = async () => {
-  const up = {};
-  Object.keys(lojas).forEach(id => { if (!pins[id]) up[id] = String(Math.floor(1000 + Math.random() * 9000)); });
-  if (!Object.keys(up).length) return alert("Todas as lojas já têm senha.");
-  await db.ref("pins").update(up);
-  alert(`${num(Object.keys(up).length)} senhas geradas.`);
-};
 $("#btnExportPins").onclick = () => {
   const base = location.origin + location.pathname;
   const linhas = Object.entries(lojas).sort((a, b) => a[1].nome.localeCompare(b[1].nome, "pt-BR"))
-    .map(([id, l]) => ({ "Loja": l.nome, "Regional": l.regional || "", "Senha": String(pins[id] || ""), "Link": `${base}?loja=${id}` }));
+    .map(([id, l]) => ({ "Loja": l.nome, "Regional": l.regional || "", "Senha": ehHash(pins[id]) ? "Definida" : "Sem senha", "Link": `${base}?loja=${id}` }));
   const ws = XLSX.utils.json_to_sheet(linhas);
-  linhas.forEach((_, i) => { const c = ws[XLSX.utils.encode_cell({ r: i + 1, c: 2 })]; if (c) { c.t = "s"; c.z = "@"; } });
-  ws["!cols"] = [{ wch: 24 }, { wch: 16 }, { wch: 9 }, { wch: 60 }];
+  ws["!cols"] = [{ wch: 24 }, { wch: 16 }, { wch: 11 }, { wch: 60 }];
   const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Senhas");
-  XLSX.writeFile(wb, "Senhas_Lojas_Coleta.xlsx");
+  XLSX.writeFile(wb, "Links_Lojas_Coleta.xlsx");
 };
 $("#btnAddLoja").onclick = () => {
   const nome = $("#cNome").value.trim(), q = parseInt($("#cQtd").value, 10);
