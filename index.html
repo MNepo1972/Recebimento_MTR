@@ -24,6 +24,7 @@
   padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
 }
 *,*::before,*::after{box-sizing:inherit}
+[hidden]{display:none !important}
 html{scroll-padding-top:env(safe-area-inset-top,0px)}
 body{margin:0;background:var(--papel);color:var(--tinta);font-family:var(--corpo);font-size:15px;line-height:1.45}
 button,input,select,textarea{font:inherit;color:inherit}
@@ -215,7 +216,7 @@ dialog h2{margin:0 0 10px;font-family:var(--disp);font-size:26px}
     <div class="linhaForm" style="grid-template-columns:1fr 1fr 1.4fr 1.4fr auto">
       <div><label class="campo" for="hIni">De</label><input type="date" id="hIni" class="input"></div>
       <div><label class="campo" for="hFim">Até</label><input type="date" id="hFim" class="input"></div>
-      <div><label class="campo" for="hLoja">Loja</label><select id="hLoja" class="input"></select></div>
+      <div id="grpHLoja"><label class="campo" for="hLoja">Loja</label><select id="hLoja" class="input"></select></div>
       <div><label class="campo" for="hMtr">Nº do MTR</label><input id="hMtr" class="input" inputmode="numeric"></div>
       <div style="display:flex;gap:6px"><button class="btn" id="btnBuscar">Buscar</button><button class="btn sec" id="btnExport">Exportar Excel</button></div>
     </div>
@@ -261,6 +262,14 @@ dialog h2{margin:0 0 10px;font-family:var(--disp);font-size:26px}
 <dialog id="dlgConf">
   <h2 id="confTit"></h2><p id="confTxt"></p>
   <div class="dlgAcoes"><button class="btn sec" id="confNao">Voltar</button><button class="btn" id="confSim">Confirmar</button></div>
+</dialog>
+<dialog id="dlgEdit">
+  <h2>Editar coleta</h2>
+  <p class="ajuda" id="editInfo"></p>
+  <div class="grupo"><label class="campo" for="editMtr">Nº do MTR</label><input id="editMtr" class="input" inputmode="numeric" autocomplete="off"></div>
+  <div class="grupo"><label class="campo" for="editQtd">Containers coletados</label><input id="editQtd" class="input" type="number" min="1" max="30"></div>
+  <div id="editMsg"></div>
+  <div class="dlgAcoes"><button class="btn sec" data-fechar>Cancelar</button><button class="btn" id="btnSalvarEdit">Salvar alteração</button></div>
 </dialog>
 <dialog id="dlgFotos">
   <h2 id="fotosTit">Fotos</h2><div class="galeria" id="galeria"></div>
@@ -341,7 +350,7 @@ function baixar(blob, nome) { const a = document.createElement("a"); a.href = UR
 /* ========= NAVEGAÇÃO ========= */
 function irPara(id) {
   document.body.classList.toggle("naCapa", id === "tCapa");
-  if (id === "tHist" && isAdmin) buscarHist();
+  if (id === "tHist" && (isAdmin || sessaoLoja)) buscarHist();
   document.querySelectorAll(".tela").forEach(t => t.classList.toggle("ativa", t.id === id));
   document.querySelectorAll("nav button").forEach(b => b.classList.toggle("ativo", b.dataset.t === id));
 }
@@ -352,7 +361,6 @@ let sessaoLoja = null, pins = {}, ouvindoPins = false;
 auth.onAuthStateChanged(async u => {
   if (!u) { auth.signInAnonymously().catch(e => mostrarMsg("#msgCapa", "erro", "Sem conexão com o servidor. " + e.message)); return; }
   isAdmin = !u.isAnonymous;
-  $("#nav").hidden = !isAdmin;
   $("#quem").textContent = isAdmin ? u.email : "";
   ouvirLojas();
   if (isAdmin) {
@@ -367,6 +375,11 @@ auth.onAuthStateChanged(async u => {
 });
 function mostrarInicio() {
   const b = $("#btnLogin");
+  $("#nav").hidden = !(isAdmin || sessaoLoja);
+  document.querySelector('nav [data-t="tCad"]').hidden = !isAdmin;
+  $("#grpHLoja").hidden = !isAdmin;
+  $("#btnZip").hidden = !isAdmin;
+  if (!isAdmin && sessaoLoja) abrirDia($("#dataPainel").value || diaKey());
   if (isAdmin) { b.hidden = false; b.textContent = "Sair"; irPara("tPainel"); return; }
   if (sessaoLoja) { b.hidden = false; b.textContent = "Sair da loja"; irPara("tLancar"); }
   else { b.hidden = true; irPara("tCapa"); }
@@ -546,8 +559,8 @@ function agregarDia() {
   return Object.values(por);
 }
 function renderPainel() {
-  if (!isAdmin) return;
-  const dia = $("#dataPainel").value, todos = agregarDia();
+  if (!isAdmin && !sessaoLoja) return;
+  const dia = $("#dataPainel").value, todos = agregarDia().filter(p => isAdmin || p.id === sessaoLoja);
   const n = todos.length, cnt = { ok: 0, parcial: 0, extra: 0, sem: 0 };
   todos.forEach(p => cnt[p.st]++);
   const enviaram = n - cnt.sem, fixoTot = todos.reduce((a, p) => a + p.fixo, 0);
@@ -562,11 +575,19 @@ function renderPainel() {
   else if (cnt.sem === n) tit = `Nenhuma das ${num(n)} lojas enviou coleta`;
   else if (cnt.sem) tit = `${num(cnt.sem)} de ${num(n)} lojas sem envio`;
   else tit = `Todas as ${num(n)} lojas enviaram`;
+  if (!isAdmin) {
+    const p = todos[0];
+    tit = !p ? "Loja não encontrada" : p.st === "sem" ? "Nenhuma coleta enviada neste dia"
+      : p.st === "extra" ? `${num(p.col)} de ${num(p.fixo)} containers, ${num(p.col - p.fixo)} extra`
+      : p.st === "parcial" ? `${num(p.col)} de ${num(p.fixo)} containers, coleta parcial`
+      : `${num(p.col)} de ${num(p.fixo)} containers, coleta completa`;
+  }
   $("#manchete").textContent = tit;
   const partes = [];
   if (extraTot) partes.push(`${num(extraTot)} ${extraTot === 1 ? "container extra" : "containers extras"}`);
   if (cnt.parcial) partes.push(`${num(cnt.parcial)} ${cnt.parcial === 1 ? "loja parcial" : "lojas parciais"}`);
-  $("#mancheteSub").textContent = `${diaBR(dia)}${partes.length ? ". " + partes.join(" e ") : ""}`;
+  $("#mancheteSub").textContent = isAdmin ? `${diaBR(dia)}${partes.length ? ". " + partes.join(" e ") : ""}` : `${todos[0] ? todos[0].nome + ", " : ""}${diaBR(dia)}`;
+  $("#kpis").hidden = $("#filtros").hidden = !isAdmin;
 
   $("#kpis").innerHTML = `
     <div class="kpi" style="border-left-color:${corFaixa(pctEnvio, FAIXA_ENVIO)}"><div class="n">${pctEnvio.toLocaleString("pt-BR")}%</div><div class="r">Lojas que enviaram: ${num(enviaram)} de ${num(n)}</div></div>
@@ -592,7 +613,7 @@ function renderPainel() {
       <div class="cont">${num(p.col)} de ${num(p.fixo)}${p.col > p.fixo ? ` <span style="color:var(--extra)">+${num(p.col - p.fixo)}</span>` : ""}</div>
       <span class="tag ${p.st}">${STATUS_TXT[p.st]}</span>
       <div class="det">${p.itens.length ? p.itens.sort((a, b) => a.ts - b.ts).map(i =>
-        `${horaBR(i.ts)}: MTR ${esc(i.mtr)} (${num(i.qtd)}) ${i.fotoArquivada ? "· foto arquivada" : `<button class="btn sec pq" data-foto="${dia}|${i.k}|${esc(p.nome)}|${esc(i.mtr)}">Ver foto</button>`}`).join("<br>")
+        `${horaBR(i.ts)}: MTR ${esc(i.mtr)} (${num(i.qtd)}) ${!isAdmin ? "" : i.fotoArquivada ? "· foto arquivada" : `<button class="btn sec pq" data-foto="${dia}|${i.k}|${esc(p.nome)}|${esc(i.mtr)}">Ver foto</button>`}`).join("<br>")
         : "Aguardando envio da loja"}</div>
     </article>`).join("") : `<div class="vazio">Nenhuma loja neste filtro.</div>`;
   $("#grade").querySelectorAll("[data-foto]").forEach(b => b.onclick = () => verFotos(...b.dataset.foto.split("|")));
@@ -637,7 +658,7 @@ $("#btnZip").onclick = async () => {
 (() => { const f = new Date(), i = new Date(); i.setDate(i.getDate() - 6); $("#hIni").value = diaKey(i); $("#hFim").value = diaKey(f); })();
 $("#btnBuscar").onclick = buscarHist;
 async function buscarHist() {
-  const ini = $("#hIni").value, fim = $("#hFim").value, lj = $("#hLoja").value, mtr = $("#hMtr").value.trim();
+  const ini = $("#hIni").value, fim = $("#hFim").value, lj = isAdmin ? $("#hLoja").value : sessaoLoja, mtr = $("#hMtr").value.trim();
   $("#hCorpo").innerHTML = `<tr><td colspan="9">Buscando...</td></tr>`;
   const s = await db.ref("lancamentos").orderByKey().startAt(ini).endAt(fim).once("value");
   histRows = [];
@@ -647,12 +668,13 @@ async function buscarHist() {
   $("#hResumo").textContent = histRows.length ? `${num(histRows.length)} coletas e ${num(tc)} containers no período` : "";
   $("#hCorpo").innerHTML = histRows.length ? histRows.map(r => {
     const st = statusDe(Number(r.qtd), Number(r.fixo));
-    return `<tr><td>${diaBR(r.dia)}</td><td>${horaBR(r.ts)}</td><td>${esc(r.lojaNome)}</td><td>${esc(r.mtr)}</td>
+    return `<tr><td>${diaBR(r.dia)}</td><td>${horaBR(r.ts)}</td><td>${esc(r.lojaNome)}</td><td>${esc(r.mtr)}${r.editado ? ' <span class="ajuda">(editado)</span>' : ""}</td>
       <td class="num">${num(r.qtd)}</td><td class="num">${num(r.fixo)}</td><td><span class="tag ${st}" style="margin:0">${STATUS_TXT[st]}</span></td>
-      <td>${r.fotoArquivada ? "Arquivada" : `<button class="btn sec pq" data-hf="${r.dia}|${r.k}|${esc(r.lojaNome)}|${esc(r.mtr)}">Ver</button>`}</td>
-      <td><button class="btn sec pq" data-del="${r.dia}|${r.k}|${esc(r.mtr)}">Excluir</button></td></tr>`;
+      <td>${r.fotoArquivada ? "Arquivada" : isAdmin ? `<button class="btn sec pq" data-hf="${r.dia}|${r.k}|${esc(r.lojaNome)}|${esc(r.mtr)}">Ver</button>` : "Enviada"}</td>
+      <td><button class="btn sec pq" data-edit="${r.dia}|${r.k}">Editar</button>${isAdmin ? ` <button class="btn sec pq" data-del="${r.dia}|${r.k}|${esc(r.mtr)}">Excluir</button>` : ""}</td></tr>`;
   }).join("") : `<tr><td colspan="9">Nenhuma coleta encontrada no período.</td></tr>`;
   $("#hCorpo").querySelectorAll("[data-hf]").forEach(b => b.onclick = () => verFotos(...b.dataset.hf.split("|")));
+  $("#hCorpo").querySelectorAll("[data-edit]").forEach(b => b.onclick = () => abrirEdicao(...b.dataset.edit.split("|")));
   $("#hCorpo").querySelectorAll("[data-del]").forEach(b => b.onclick = async () => {
     const [dia, k, m] = b.dataset.del.split("|");
     if (!await confirmar("Excluir lançamento?", `O MTR ${m} sai do sistema e pode ser lançado de novo.`, "Excluir")) return;
@@ -660,6 +682,42 @@ async function buscarHist() {
     buscarHist();
   });
 }
+let editAlvo = null;
+function abrirEdicao(dia, k) {
+  editAlvo = histRows.find(r => r.dia === dia && r.k === k); if (!editAlvo) return;
+  $("#editInfo").textContent = `${editAlvo.lojaNome}, ${diaBR(dia)} às ${horaBR(editAlvo.ts)}. A loja tem ${editAlvo.fixo} containers fixos.`;
+  $("#editMtr").value = editAlvo.mtr; $("#editQtd").value = editAlvo.qtd; $("#editMsg").innerHTML = "";
+  $("#dlgEdit").showModal();
+}
+$("#editMtr").oninput = e => e.target.value = e.target.value.replace(/\D/g, "");
+$("#btnSalvarEdit").onclick = async () => {
+  const a = editAlvo; if (!a) return;
+  const novoMtr = $("#editMtr").value.trim(), novaQtd = parseInt($("#editQtd").value, 10), fixo = Number(a.fixo);
+  if (novoMtr.length < 6) return mostrarMsg("#editMsg", "erro", "Digite o número do MTR completo.");
+  if (!(novaQtd >= 1)) return mostrarMsg("#editMsg", "erro", "Informe quantos containers foram coletados.");
+  if (novoMtr === String(a.mtr) && novaQtd === Number(a.qtd)) { $("#dlgEdit").close(); return; }
+  if (novaQtd > fixo && novaQtd !== Number(a.qtd)) {
+    $("#dlgEdit").close();
+    const ok = await confirmar("Coleta extra?", `Você informou ${novaQtd} containers. A loja tem ${fixo} fixos. Confirma ${novaQtd - fixo} extra?`, "Sim, teve extra");
+    if (!ok) return; $("#dlgEdit").showModal();
+  }
+  const btn = $("#btnSalvarEdit"); btn.disabled = true;
+  try {
+    const trocouMtr = novoMtr !== String(a.mtr);
+    if (trocouMtr) {
+      const tr = await db.ref("mtrs/" + novoMtr).transaction(cur => cur ? undefined : { dia: a.dia, loja: a.loja, key: a.k, ts: Date.now() });
+      if (!tr.committed) throw new Error(`O MTR ${novoMtr} já foi lançado em outra coleta.`);
+    }
+    await db.ref(`lancamentos/${a.dia}/${a.k}`).update({
+      mtr: novoMtr, qtd: novaQtd,
+      editado: { ts: Date.now(), por: isAdmin ? (auth.currentUser.email || "gestor") : "loja", de: { mtr: String(a.mtr), qtd: Number(a.qtd) } }
+    });
+    if (trocouMtr) await db.ref("mtrs/" + a.mtr).remove().catch(() => {});
+    $("#dlgEdit").close(); buscarHist();
+  } catch (e) {
+    mostrarMsg("#editMsg", "erro", /permission/i.test(e.message) ? "Sem permissão para editar. Confira as regras do banco ou entre de novo com a senha da loja." : e.message);
+  } finally { btn.disabled = false; }
+};
 $("#btnExport").onclick = () => {
   if (!histRows.length) return alert("Faça uma busca antes de exportar.");
   const linhas = histRows.map(r => ({
